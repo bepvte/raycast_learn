@@ -55,25 +55,12 @@ void draw_rectangle(SDL_Surface* img,
                     const size_t w,
                     const size_t h,
                     const uint32_t color) {
-#if 0
-  assert(img.size() == img_w * img_h);
-  for (size_t i = 0; i < w; i++) {
-    for (size_t j = 0; j < h; j++) {
-      size_t cx = x + i;
-      size_t cy = y + j;
-      if (cx >= img_w || cy >= img_h)
-        continue;
-      img[cx + cy * img_w] = color;
-    }
-  }
-#else
   SDL_Rect rect;
   rect.x = x;
   rect.y = y;
   rect.w = w;
   rect.h = h;
   SDL_FillRect(img, &rect, color);
-#endif
 }
 
 void blit(SDL_Surface* source, SDL_Window* window) {
@@ -90,7 +77,6 @@ struct Map {
   Map();
   Map(const std::vector<char> &m) : m(m) {};
   Map(const char (&m)[]);
-  const char at(const size_t idx) const { return m.at(idx); };
 };
 Map::Map() {
   const char mapdata[] =
@@ -109,7 +95,7 @@ Map::Map() {
       "0       0      0"
       "0 0000000      0"
       "0              0"
-      "0002222222200000";
+      "0002222222200004";
   m = std::vector<char>(std::begin(mapdata), std::end(mapdata));
 }
 Map::Map(const char (&map)[]) {
@@ -123,37 +109,42 @@ struct State {
   float x = 3.456;
   float y = 2.345;
   float a = 1.523;
+  float velocity_y = 0;
+  float velocity_x = 0;
   const size_t win_w = 1024;  // image width
   const size_t win_h = 512;   // image height
   const Map map = Map();
-  State() {};
-  State(const Map &map) : map(map) {};
+  const size_t ncolors;
+  const uint32_t* colors;
+  State(const uint32_t* colors, const size_t ncolors) : colors(colors), ncolors(ncolors){};
+  State(const uint32_t* colors, const size_t ncolors, const Map& map)
+      : colors(colors), ncolors(ncolors), map(map){};
 };
 
 #ifdef __EMSCRIPTEN__
 struct iterargs {
-  State *state;
-  SDL_Window *window;
-  SDL_Surface *surface;
+  State* state;
+  SDL_Window* window;
+  SDL_Surface* surface;
 };
-void iter(iterargs *args) {
-  State &state = *args->state;
-  SDL_Window *window = args->window;
-  SDL_Surface *surface = args->surface;
+void iter(iterargs* args) {
+  State& state = *args->state;
+  SDL_Window* window = args->window;
+  SDL_Surface* surface = args->surface;
 #else
-void iter(State &state, SDL_Window *window, SDL_Surface* surface) {
+void iter(State& state, SDL_Window* window, SDL_Surface* surface) {
 #endif
   SDL_Event evt;
   while (SDL_PollEvent(&evt)) {
     switch (evt.type) {
       case SDL_MOUSEMOTION: {
-        const SDL_MouseMotionEvent* mouse =
-            reinterpret_cast<SDL_MouseMotionEvent*>(&evt);
+        const SDL_MouseMotionEvent* mouse = reinterpret_cast<SDL_MouseMotionEvent*>(&evt);
         float movement = mouse->xrel * (M_PI / 180);
         state.a += movement;
         break;
       }
       case SDL_QUIT:
+        delete state.colors;
         SDL_FreeSurface(surface);
         SDL_DestroyWindow(window);
         std::exit(0);
@@ -165,60 +156,74 @@ void iter(State &state, SDL_Window *window, SDL_Surface* surface) {
     SDL_QuitEvent evt = {SDL_QUIT, SDL_GetTicks()};
     SDL_PushEvent(reinterpret_cast<SDL_Event*>(&evt));
   }
-  if (ks[SDL_SCANCODE_UP] || ks[SDL_SCANCODE_W])
-    state.y -= 0.05;
-  if (ks[SDL_SCANCODE_DOWN] || ks[SDL_SCANCODE_S])
-    state.y += 0.05;
-  if (ks[SDL_SCANCODE_RIGHT] || ks[SDL_SCANCODE_D])
-    state.x += 0.05;
-  if (ks[SDL_SCANCODE_LEFT] || ks[SDL_SCANCODE_A])
-    state.x -= 0.05;
+  float force = 0.05;
+  if (ks[SDL_SCANCODE_UP] || ks[SDL_SCANCODE_W]) {
+    state.velocity_y -= cos(state.a)*force;
+  }
+  if (ks[SDL_SCANCODE_DOWN] || ks[SDL_SCANCODE_S]) {
+    state.velocity_y += cos(state.a)*force;
+  }
+  if (ks[SDL_SCANCODE_RIGHT] || ks[SDL_SCANCODE_D]) {
+    state.velocity_x += sin(state.a)*force;
+  }
+  if (ks[SDL_SCANCODE_LEFT] || ks[SDL_SCANCODE_A]) {
+    state.velocity_x -= sin(state.a)*force;
+  }
+  float nx = state.x + state.velocity_x;//*(state.a);
+  float ny = state.y + state.velocity_y;//*(state.a);
+
+  state.x = nx;
+  state.y = ny;
+
+  state.velocity_x = 0;
+  state.velocity_y = 0;
 
   SDL_FillRect(surface, nullptr, pack_color(255, 255, 255));
 
-  const Map &map = state.map;
+  const Map& map = state.map;
 
   const size_t rect_w = state.win_w / (map.w * 2);
   const size_t rect_h = state.win_h / map.h;
   for (size_t j = 0; j < map.h; j++) {
     for (size_t i = 0; i < map.w; i++) {
-      if (map[i + j * map.w] == ' ')
+      const char maptile = map[i + j * map.w];
+      if (maptile == ' ')
         continue;
       const size_t rect_x = i * rect_w;
       const size_t rect_y = j * rect_h;
-      draw_rectangle(surface, state.win_w, state.win_h, rect_x, rect_y, rect_w, rect_h,
-                     pack_color(0, 128, 255));
+      const size_t icolor = maptile - '0';
+      assert(icolor<ncolors);
+      draw_rectangle(surface, state.win_w, state.win_h, rect_x, rect_y, rect_w, rect_h, state.colors[icolor]);
     }
   }
 
-  draw_rectangle(surface, state.win_w, state.win_h, state.x * rect_w,
-                 state.y * rect_h, 5, 5, pack_color(255, 0, 0));
+  draw_rectangle(surface, state.win_w, state.win_h, state.x * rect_w, state.y * rect_h, 5, 5,
+                 pack_color(255, 0, 0));
 
   for (size_t i = 0; i < state.win_w / 2; i++) {  // 512 rays
     // player_a minus half fov (top of cone)
-    const float angle =
-        // NOLINTNEXTLINE(bugprone-integer-division)
-        state.a - fov / 2 + fov * i / static_cast<float>(state.win_w / 2);
+    // NOLINTNEXTLINE(bugprone-integer-division)
+    const float angle = state.a - fov / 2 + fov * i / static_cast<float>(state.win_w / 2);
     for (float t = 0; t < 20; t += 0.05) {
       const float cx = state.x + t * cos(angle);
       const float cy = state.y + t * sin(angle);
       // printf("t: %f, cx: %f, cy: %f\n", t, cx, cy);
 
-      const int pix_x = cx * rect_w;
-      const int pix_y = cy * rect_h;
+      const size_t pix_x = cx * rect_w;
+      const size_t pix_y = cy * rect_h;
       draw_rectangle(surface, state.win_w, state.win_h, pix_x, pix_y, 1, 1,
                      pack_color(160, 160, 160));
 
-      const uint32_t maploc =
-          static_cast<uint32_t>(cx) + static_cast<uint32_t>(cy) * map.w;
+      const uint32_t maploc = static_cast<uint32_t>(cx) + static_cast<uint32_t>(cy) * map.w;
       if (maploc > map.h * map.w)
         break;
       const char maptile = map[maploc];
       if (maptile != ' ') {
-        const size_t column_height = state.win_h / t;
+        const size_t icolor = maptile - '0';
+        const size_t column_height = state.win_h / (t * cos(angle - state.a));
         draw_rectangle(surface, state.win_w, state.win_h, state.win_w / 2 + i,
                        state.win_h / 2 - column_height / 2, 1, column_height,
-                       pack_color(0, 128, 255));
+                       state.colors[icolor]);
         break;
       }
     }
@@ -233,16 +238,20 @@ extern "C" int main(int argc, char* argv[]) {
   if (err)
     err_exit(SDL_GetError());
 
-  State state{};
+  const size_t ncolors = 10;
+  uint32_t* colors = new uint32_t[10];
+  for (size_t i = 0; i < ncolors; i++) {
+    colors[i] = pack_color(rand() % 255, rand() % 255, rand() % 255);
+  }
+  State state = State(colors, ncolors);
 
-  SDL_Window* window = SDL_CreateWindow("my3dhome", SDL_WINDOWPOS_CENTERED,
-                                        SDL_WINDOWPOS_CENTERED, state.win_w,
-                                        state.win_h, SDL_WINDOW_INPUT_GRABBED);
+  SDL_Window* window =
+      SDL_CreateWindow("raycast_learn", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, state.win_w,
+                       state.win_h, SDL_WINDOW_INPUT_GRABBED);
   if (!window)
     err_exit(SDL_GetError());
 
-  SDL_Surface* surface =
-      SDL_CreateRGBSurface(0, state.win_w, state.win_h, 32, 0, 0, 0, 0);
+  SDL_Surface* surface = SDL_CreateRGBSurface(0, state.win_w, state.win_h, 32, 0, 0, 0, 0);
   if (!surface)
     err_exit(SDL_GetError());
 
