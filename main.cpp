@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -87,8 +86,11 @@ struct Map {
   const size_t w = 16;
   const size_t h = 16;
   std::vector<char> m;  // our game map
+  const char& operator[](std::size_t idx) const { return m[idx]; }
   Map();
   Map(const std::vector<char> &m) : m(m) {};
+  Map(const char (&m)[]);
+  const char at(const size_t idx) const { return m.at(idx); };
 };
 Map::Map() {
   const char mapdata[] =
@@ -110,6 +112,12 @@ Map::Map() {
       "0002222222200000";
   m = std::vector<char>(std::begin(mapdata), std::end(mapdata));
 }
+Map::Map(const char (&map)[]) {
+  const size_t length = strlen(map);
+  m = std::vector<char>(map, map+length);
+}
+
+const float fov = M_PI / 3;
 
 struct State {
   float x = 3.456;
@@ -117,12 +125,24 @@ struct State {
   float a = 1.523;
   const size_t win_w = 1024;  // image width
   const size_t win_h = 512;   // image height
-  const float fov = M_PI / 3;
-  const Map &m = Map();
-  State(const Map &m) : m(m) {};
+  const Map map = Map();
+  State() {};
+  State(const Map &map) : map(map) {};
 };
 
-void iter() {
+#ifdef __EMSCRIPTEN__
+struct iterargs {
+  State *state;
+  SDL_Window *window;
+  SDL_Surface *surface;
+};
+void iter(iterargs *args) {
+  State &state = *args->state;
+  SDL_Window *window = args->window;
+  SDL_Surface *surface = args->surface;
+#else
+void iter(State &state, SDL_Window *window, SDL_Surface* surface) {
+#endif
   SDL_Event evt;
   while (SDL_PollEvent(&evt)) {
     switch (evt.type) {
@@ -130,7 +150,7 @@ void iter() {
         const SDL_MouseMotionEvent* mouse =
             reinterpret_cast<SDL_MouseMotionEvent*>(&evt);
         float movement = mouse->xrel * (M_PI / 180);
-        player_a += movement;
+        state.a += movement;
         break;
       }
       case SDL_QUIT:
@@ -146,55 +166,58 @@ void iter() {
     SDL_PushEvent(reinterpret_cast<SDL_Event*>(&evt));
   }
   if (ks[SDL_SCANCODE_UP] || ks[SDL_SCANCODE_W])
-    player_y -= 0.05;
+    state.y -= 0.05;
   if (ks[SDL_SCANCODE_DOWN] || ks[SDL_SCANCODE_S])
-    player_y += 0.05;
+    state.y += 0.05;
   if (ks[SDL_SCANCODE_RIGHT] || ks[SDL_SCANCODE_D])
-    player_x += 0.05;
+    state.x += 0.05;
   if (ks[SDL_SCANCODE_LEFT] || ks[SDL_SCANCODE_A])
-    player_x -= 0.05;
+    state.x -= 0.05;
 
   SDL_FillRect(surface, nullptr, pack_color(255, 255, 255));
 
-  const size_t rect_w = win_w / (map_w * 2);
-  const size_t rect_h = win_h / map_h;
-  for (size_t j = 0; j < map_h; j++) {
-    for (size_t i = 0; i < map_w; i++) {
-      if (map[i + j * map_w] == ' ')
+  const Map &map = state.map;
+
+  const size_t rect_w = state.win_w / (map.w * 2);
+  const size_t rect_h = state.win_h / map.h;
+  for (size_t j = 0; j < map.h; j++) {
+    for (size_t i = 0; i < map.w; i++) {
+      if (map[i + j * map.w] == ' ')
         continue;
       const size_t rect_x = i * rect_w;
       const size_t rect_y = j * rect_h;
-      draw_rectangle(surface, win_w, win_h, rect_x, rect_y, rect_w, rect_h,
+      draw_rectangle(surface, state.win_w, state.win_h, rect_x, rect_y, rect_w, rect_h,
                      pack_color(0, 128, 255));
     }
   }
 
-  draw_rectangle(surface, win_w, win_h, player_x * rect_w, player_y * rect_h, 5,
-                 5, pack_color(255, 0, 0));
+  draw_rectangle(surface, state.win_w, state.win_h, state.x * rect_w,
+                 state.y * rect_h, 5, 5, pack_color(255, 0, 0));
 
-  for (size_t i = 0; i < win_w / 2; i++) {  // 512 rays
+  for (size_t i = 0; i < state.win_w / 2; i++) {  // 512 rays
     // player_a minus half fov (top of cone)
     const float angle =
         // NOLINTNEXTLINE(bugprone-integer-division)
-        player_a - fov / 2 + fov * i / static_cast<float>(win_w / 2);
+        state.a - fov / 2 + fov * i / static_cast<float>(state.win_w / 2);
     for (float t = 0; t < 20; t += 0.05) {
-      const float cx = player_x + t * cos(angle);
-      const float cy = player_y + t * sin(angle);
+      const float cx = state.x + t * cos(angle);
+      const float cy = state.y + t * sin(angle);
       // printf("t: %f, cx: %f, cy: %f\n", t, cx, cy);
 
       const int pix_x = cx * rect_w;
       const int pix_y = cy * rect_h;
-      draw_rectangle(surface, win_w, win_h, pix_x, pix_y, 1, 1, pack_color(160,160,160));
+      draw_rectangle(surface, state.win_w, state.win_h, pix_x, pix_y, 1, 1,
+                     pack_color(160, 160, 160));
 
       const uint32_t maploc =
-          static_cast<uint32_t>(cx) + static_cast<uint32_t>(cy) * map_w;
-      if (maploc > map_h * map_w)
+          static_cast<uint32_t>(cx) + static_cast<uint32_t>(cy) * map.w;
+      if (maploc > map.h * map.w)
         break;
       const char maptile = map[maploc];
       if (maptile != ' ') {
-        const size_t column_height = win_h / t;
-        draw_rectangle(surface, win_w, win_h, win_w / 2 + i,
-                       win_h / 2 - column_height / 2, 1, column_height,
+        const size_t column_height = state.win_h / t;
+        draw_rectangle(surface, state.win_w, state.win_h, state.win_w / 2 + i,
+                       state.win_h / 2 - column_height / 2, 1, column_height,
                        pack_color(0, 128, 255));
         break;
       }
@@ -210,13 +233,16 @@ extern "C" int main(int argc, char* argv[]) {
   if (err)
     err_exit(SDL_GetError());
 
-  window = SDL_CreateWindow("my3dhome", SDL_WINDOWPOS_CENTERED,
-                            SDL_WINDOWPOS_CENTERED, win_w, win_h,
-                            SDL_WINDOW_INPUT_GRABBED);
+  State state{};
+
+  SDL_Window* window = SDL_CreateWindow("my3dhome", SDL_WINDOWPOS_CENTERED,
+                                        SDL_WINDOWPOS_CENTERED, state.win_w,
+                                        state.win_h, SDL_WINDOW_INPUT_GRABBED);
   if (!window)
     err_exit(SDL_GetError());
 
-  surface = SDL_CreateRGBSurface(0, win_w, win_h, 32, 0, 0, 0, 0);
+  SDL_Surface* surface =
+      SDL_CreateRGBSurface(0, state.win_w, state.win_h, 32, 0, 0, 0, 0);
   if (!surface)
     err_exit(SDL_GetError());
 
@@ -225,15 +251,16 @@ extern "C" int main(int argc, char* argv[]) {
     err_exit(SDL_GetError());
 
   SDL_FillRect(surface, nullptr, pack_color(255, 255, 255));
-  assert(sizeof(map) == map_w * map_h + 1);
+  assert(state.map.m.size() == state.map.w * state.map.h + 1);
   // drop_png_image("./out.png", surface, win_w, win_h);
 
 #ifdef __EMSCRIPTEN__
-  emscripten_set_main_loop(iter, 0, true);
+  iterargs args{&state, window, surface};
+  emscripten_set_main_loop_arg((em_arg_callback_func)iter, (void*)&args, 0, true);
 #else
   while (true) {
     uint32_t start = SDL_GetTicks();
-    iter();
+    iter(state, window, surface);
     const uint32_t end = SDL_GetTicks();
     uint32_t delay = end - start;
     if (delay > 16)
