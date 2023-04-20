@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -46,58 +47,6 @@ constexpr void unpack_color(const uint32_t& color,
   b = (color >> 16) & 255;
   a = (color >> 24) & 255;
 }
-
-// void drop_png_image(const std::string filename,
-//                     SDL_Surface* image,
-//                     const size_t w,
-//                     const size_t h) {
-//   std::FILE* f = std::fopen(filename.c_str(), "wb");
-//   if (!f)
-//     err_exit("file wont open");
-//   png_structp png_ptr =
-//       png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr,
-//       nullptr);
-//   png_infop info_ptr = png_create_info_struct(png_ptr);
-//   if (!png_ptr || !info_ptr)
-//     err_exit("cant allocate info png");
-//   if (setjmp(png_jmpbuf(png_ptr))) {
-//     png_destroy_write_struct(&png_ptr, &info_ptr);
-//     err_exit("failed");
-//   }
-//   png_set_IHDR(png_ptr, info_ptr, w, h, 8, PNG_COLOR_TYPE_RGB_ALPHA,
-//                PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
-//                PNG_FILTER_TYPE_DEFAULT);
-//   png_init_io(png_ptr, f);
-//   png_set_invert_alpha(png_ptr);
-//   png_write_info(png_ptr, info_ptr);
-//   std::vector<png_byte> imagel(h * w * BYTES_PER_PIXEL);
-//   std::vector<png_byte*> row_pointers(h);
-
-//   for (uint32_t y = 0; y < h; y++) {
-//     row_pointers[y] = imagel.data() + y * w * 4;
-//     for (uint32_t x = 0; x < w; x++) {
-//       uint8_t r, g, b, a;
-//       unpack_color(reinterpret_cast<uint32_t*>(image->pixels)[x + y * w], r,
-//       g,
-//                    b, a);
-//       // printf("at y: %u and x: %u | r: %u, g: %u, b: %u, a: %u\n", y, x, r,
-//       g,
-//       // b, a);
-//       row_pointers[y][x * 4] = r;
-//       row_pointers[y][x * 4 + 1] = g;
-//       row_pointers[y][x * 4 + 2] = b;
-//       row_pointers[y][x * 4 + 3] = a;
-//     }
-//   }
-
-//   png_write_image(png_ptr, row_pointers.data());
-
-//   png_write_end(png_ptr, info_ptr);
-//   png_destroy_write_struct(&png_ptr, &info_ptr);
-
-//   if (fclose(f))
-//     err_exit("failed to close file");
-// }
 
 void draw_rectangle(SDL_Surface* img,
                     const size_t img_w,
@@ -134,34 +83,44 @@ void blit(SDL_Surface* source, SDL_Window* window) {
   SDL_UpdateWindowSurface(window);
 }
 
-const size_t win_w = 1024;  // image width
-const size_t win_h = 512;   // image height
-const size_t map_w = 16;    // map width
-const size_t map_h = 16;  // map height
-const char map[] =
-    "0000222222220000"
-    "1              0"
-    "1      11111   0"
-    "1     0        0"
-    "0     0  1110000"
-    "0     3        0"
-    "0   10000      0"
-    "0   0   11100  0"
-    "0   0   0      0"
-    "0   0   1  00000"
-    "0       1      0"
-    "2       1      0"
-    "0       0      0"
-    "0 0000000      0"
-    "0              0"
-    "0002222222200000";  // our game map
+struct Map {
+  const size_t w = 16;
+  const size_t h = 16;
+  std::vector<char> m;  // our game map
+  Map();
+  Map(const std::vector<char> &m) : m(m) {};
+};
+Map::Map() {
+  const char mapdata[] =
+      "0000222222220000"
+      "1              0"
+      "1      11111   0"
+      "1     0        0"
+      "0     0  1110000"
+      "0     3        0"
+      "0   10000      0"
+      "0   0   11100  0"
+      "0   0   0      0"
+      "0   0   1  00000"
+      "0       1      0"
+      "2       1      0"
+      "0       0      0"
+      "0 0000000      0"
+      "0              0"
+      "0002222222200000";
+  m = std::vector<char>(std::begin(mapdata), std::end(mapdata));
+}
 
-float player_x = 3.456;
-float player_y = 2.345;
-float player_a = 1.523;
-const float fov = M_PI / 3.;
-SDL_Surface* surface = nullptr;
-SDL_Window* window = nullptr;
+struct State {
+  float x = 3.456;
+  float y = 2.345;
+  float a = 1.523;
+  const size_t win_w = 1024;  // image width
+  const size_t win_h = 512;   // image height
+  const float fov = M_PI / 3;
+  const Map &m = Map();
+  State(const Map &m) : m(m) {};
+};
 
 void iter() {
   SDL_Event evt;
